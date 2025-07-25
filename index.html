@@ -1,982 +1,1383 @@
-import React, { useState, useEffect } from 'react';
-import { Calendar, Users, Clock, Settings, BarChart3, User, Plus, Minus, ChevronLeft, ChevronRight, Check, X, Edit, Save, AlertCircle } from 'lucide-react';
-
-const CatholicReaderSystem = () => {
-  // 상태 관리
-  const [currentUser, setCurrentUser] = useState({ id: 1, name: '관리자', role: 'admin' });
-  const [activeTab, setActiveTab] = useState('schedule');
-  const [currentDate, setCurrentDate] = useState(new Date());
-  const [selectedDate, setSelectedDate] = useState(null);
-  
-  // 기본 데이터
-  const [masses, setMasses] = useState([
-    { id: 1, day: 0, time: '06:00', type: '새벽미사', readingCount: 1 }, // 일요일
-    { id: 2, day: 0, time: '09:00', type: '주일미사', readingCount: 2 },
-    { id: 3, day: 0, time: '11:00', type: '주일미사', readingCount: 2 },
-    { id: 4, day: 6, time: '19:00', type: '토요일미사', readingCount: 2 }, // 토요일
-    { id: 5, day: 1, time: '06:30', type: '평일미사', readingCount: 1 }, // 월요일
-    { id: 6, day: 2, time: '06:30', type: '평일미사', readingCount: 1 }, // 화요일
-    { id: 7, day: 3, time: '06:30', type: '평일미사', readingCount: 1 }, // 수요일
-    { id: 8, day: 4, time: '06:30', type: '평일미사', readingCount: 1 }, // 목요일
-    { id: 9, day: 5, time: '06:30', type: '평일미사', readingCount: 1 }, // 금요일
-  ]);
-
-  const [readers, setReaders] = useState([
-    { id: 1, name: '김요한', gender: '남', isCouple: true, coupleId: 2, serviceCount: 0 },
-    { id: 2, name: '김마리아', gender: '여', isCouple: true, coupleId: 1, serviceCount: 0 },
-    { id: 3, name: '박베드로', gender: '남', isCouple: false, coupleId: null, serviceCount: 0 },
-    { id: 4, name: '이안나', gender: '여', isCouple: false, coupleId: null, serviceCount: 0 },
-    { id: 5, name: '최바오로', gender: '남', isCouple: true, coupleId: 6, serviceCount: 0 },
-    { id: 6, name: '최엘리사벳', gender: '여', isCouple: true, coupleId: 5, serviceCount: 0 },
-    { id: 7, name: '정요셉', gender: '남', isCouple: false, coupleId: null, serviceCount: 0 },
-    { id: 8, name: '한루시아', gender: '여', isCouple: false, coupleId: null, serviceCount: 0 },
-  ]);
-
-  const [unavailability, setUnavailability] = useState({});
-  const [assignments, setAssignments] = useState({});
-  const [showMassForm, setShowMassForm] = useState(false);
-  const [showReaderForm, setShowReaderForm] = useState(false);
-  const [editingMass, setEditingMass] = useState(null);
-  const [editingReader, setEditingReader] = useState(null);
-  const [massForm, setMassForm] = useState({ day: 0, time: '', type: '', readingCount: 1 });
-  const [readerForm, setReaderForm] = useState({ name: '', gender: '남', isCouple: false, coupleId: null });
-
-  // 날짜 관련 유틸리티
-  const getDaysInMonth = (date) => {
-    return new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
-  };
-
-  const getFirstDayOfMonth = (date) => {
-    return new Date(date.getFullYear(), date.getMonth(), 1).getDay();
-  };
-
-  const formatDate = (date) => {
-    return date.toISOString().split('T')[0];
-  };
-
-  const getDateString = (year, month, day) => {
-    return `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-  };
-
-  // 미사 일정 생성
-  const generateMassSchedule = (year, month) => {
-    const schedule = [];
-    const daysInMonth = getDaysInMonth(new Date(year, month));
-    
-    for (let day = 1; day <= daysInMonth; day++) {
-      const date = new Date(year, month, day);
-      const dayOfWeek = date.getDay();
-      
-      masses.forEach(mass => {
-        if (mass.day === dayOfWeek) {
-          const dateStr = getDateString(year, month, day);
-          schedule.push({
-            date: dateStr,
-            massId: mass.id,
-            time: mass.time,
-            type: mass.type,
-            readingCount: mass.readingCount,
-            dayOfWeek
-          });
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>천주교 독서 배정표 관리 시스템</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
         }
-      });
-    }
-    
-    return schedule;
-  };
 
-  // 독서 배정 알고리즘
-  const autoAssignReaders = () => {
-    const year = currentDate.getFullYear();
-    const month = currentDate.getMonth();
-    const schedule = generateMassSchedule(year, month);
-    const newAssignments = {};
-    
-    // 독서자별 봉사 횟수 초기화
-    const serviceCountByReader = {};
-    readers.forEach(reader => {
-      serviceCountByReader[reader.id] = reader.serviceCount;
-    });
-
-    // 토요일 배정자 추적
-    const saturdayAssigned = new Set();
-
-    schedule.forEach(mass => {
-      const { date, massId, readingCount, dayOfWeek } = mass;
-      const key = `${date}-${massId}`;
-      
-      // 해당 날짜에 불가능한 독서자 필터링
-      const availableReaders = readers.filter(reader => {
-        const unavailableKey = `${reader.id}-${date}-${massId}`;
-        const isUnavailable = unavailability[unavailableKey];
-        
-        // 토요일 저녁 미사 배정자는 일요일 제외
-        if (dayOfWeek === 0 && saturdayAssigned.has(reader.id)) {
-          return false;
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
         }
-        
-        return !isUnavailable;
-      });
 
-      const assignment = { first: null, second: null };
-
-      if (readingCount === 1) {
-        // 1독서만 있는 경우 (남녀 모두 가능)
-        const sortedReaders = availableReaders.sort((a, b) => 
-          serviceCountByReader[a.id] - serviceCountByReader[b.id]
-        );
-        
-        if (sortedReaders.length > 0) {
-          assignment.first = sortedReaders[0].id;
-          serviceCountByReader[sortedReaders[0].id]++;
-          
-          // 토요일 저녁 미사인 경우 기록
-          if (dayOfWeek === 6 && mass.time === '19:00') {
-            saturdayAssigned.add(sortedReaders[0].id);
-          }
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            overflow: hidden;
         }
-      } else if (readingCount === 2) {
-        // 1독서: 남성, 2독서: 여성
-        const maleReaders = availableReaders.filter(r => r.gender === '남');
-        const femaleReaders = availableReaders.filter(r => r.gender === '여');
-        
-        // 부부독서단 우선 고려
-        const couples = availableReaders
-          .filter(r => r.isCouple)
-          .reduce((acc, reader) => {
-            if (!acc[reader.coupleId]) acc[reader.coupleId] = [];
-            acc[reader.coupleId].push(reader);
-            return acc;
-          }, {});
 
-        let assigned = false;
+        .header {
+            background: linear-gradient(135deg, #4CAF50, #45a049);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
 
-        // 부부독서단 배정 시도
-        Object.values(couples).forEach(couple => {
-          if (assigned || couple.length !== 2) return;
-          
-          const husband = couple.find(r => r.gender === '남');
-          const wife = couple.find(r => r.gender === '여');
-          
-          if (husband && wife) {
-            assignment.first = husband.id;
-            assignment.second = wife.id;
-            serviceCountByReader[husband.id]++;
-            serviceCountByReader[wife.id]++;
-            assigned = true;
-            
-            // 토요일 저녁 미사인 경우 기록
-            if (dayOfWeek === 6 && mass.time === '19:00') {
-              saturdayAssigned.add(husband.id);
-              saturdayAssigned.add(wife.id);
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+
+        .nav-tabs {
+            display: flex;
+            background: #f8f9fa;
+            border-bottom: 2px solid #e9ecef;
+        }
+
+        .nav-tab {
+            flex: 1;
+            padding: 20px;
+            text-align: center;
+            background: none;
+            border: none;
+            cursor: pointer;
+            font-size: 1.1em;
+            font-weight: 600;
+            color: #6c757d;
+            transition: all 0.3s ease;
+            position: relative;
+        }
+
+        .nav-tab.active {
+            color: #4CAF50;
+            background: white;
+        }
+
+        .nav-tab.active::after {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 3px;
+            background: #4CAF50;
+        }
+
+        .nav-tab:hover {
+            background: #e9ecef;
+            color: #495057;
+        }
+
+        .tab-content {
+            display: none;
+            padding: 30px;
+            animation: fadeIn 0.5s ease-in;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .form-group {
+            margin-bottom: 25px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #495057;
+        }
+
+        .form-group input, .form-group select, .form-group textarea {
+            width: 100%;
+            padding: 12px 15px;
+            border: 2px solid #e9ecef;
+            border-radius: 10px;
+            font-size: 1em;
+            transition: all 0.3s ease;
+        }
+
+        .form-group input:focus, .form-group select:focus, .form-group textarea:focus {
+            outline: none;
+            border-color: #4CAF50;
+            box-shadow: 0 0 0 3px rgba(76, 175, 80, 0.1);
+        }
+
+        .btn {
+            background: linear-gradient(135deg, #4CAF50, #45a049);
+            color: white;
+            padding: 12px 25px;
+            border: none;
+            border-radius: 10px;
+            cursor: pointer;
+            font-size: 1em;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            margin: 5px;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(76, 175, 80, 0.4);
+        }
+
+        .btn-secondary {
+            background: linear-gradient(135deg, #6c757d, #5a6268);
+        }
+
+        .btn-danger {
+            background: linear-gradient(135deg, #dc3545, #c82333);
+        }
+
+        .card {
+            background: #f8f9fa;
+            border-radius: 15px;
+            padding: 20px;
+            margin-bottom: 20px;
+            border-left: 5px solid #4CAF50;
+            transition: all 0.3s ease;
+        }
+
+        .card:hover {
+            transform: translateX(5px);
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin-top: 20px;
+        }
+
+        /* 달력 스타일 */
+        .calendar-container {
+            background: white;
+            border-radius: 15px;
+            padding: 20px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+        }
+
+        .calendar-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding: 15px;
+            background: #4CAF50;
+            color: white;
+            border-radius: 10px;
+        }
+
+        .calendar-nav {
+            background: none;
+            border: none;
+            color: white;
+            font-size: 1.5em;
+            cursor: pointer;
+            padding: 5px 10px;
+            border-radius: 5px;
+            transition: background 0.3s ease;
+        }
+
+        .calendar-nav:hover {
+            background: rgba(255,255,255,0.2);
+        }
+
+        .calendar-grid {
+            display: grid;
+            grid-template-columns: repeat(7, 1fr);
+            gap: 1px;
+            background: #e9ecef;
+            border-radius: 10px;
+            overflow: hidden;
+        }
+
+        .calendar-day-header {
+            background: #6c757d;
+            color: white;
+            padding: 15px 5px;
+            text-align: center;
+            font-weight: 600;
+            font-size: 0.9em;
+        }
+
+        .calendar-day {
+            background: white;
+            min-height: 100px;
+            padding: 10px 5px;
+            position: relative;
+            transition: all 0.3s ease;
+        }
+
+        .calendar-day:hover {
+            background: #f8f9fa;
+        }
+
+        .calendar-day.other-month {
+            background: #f8f9fa;
+            color: #6c757d;
+        }
+
+        .calendar-day.today {
+            background: #e3f2fd;
+            border: 2px solid #2196F3;
+        }
+
+        .calendar-day.has-mass {
+            background: #e8f5e8;
+            border-left: 4px solid #4CAF50;
+        }
+
+        .day-number {
+            font-weight: 600;
+            margin-bottom: 5px;
+            font-size: 1.1em;
+        }
+
+        .mass-time {
+            background: #4CAF50;
+            color: white;
+            padding: 3px 6px;
+            border-radius: 10px;
+            font-size: 0.8em;
+            margin: 2px 0;
+            display: block;
+            text-align: center;
+        }
+
+        .sunday {
+            background: #fff3e0;
+        }
+
+        .sunday .mass-time {
+            background: #ff9800;
+        }
+
+        /* 불가능 시간 체크 스타일 */
+        .unavailable-times {
+            max-height: 500px;
+            overflow-y: auto;
+            background: #f8f9fa;
+            border-radius: 10px;
+            padding: 20px;
+        }
+
+        .date-section {
+            margin-bottom: 20px;
+            background: white;
+            border-radius: 10px;
+            padding: 15px;
+            border-left: 4px solid #4CAF50;
+        }
+
+        .date-section.sunday {
+            border-left-color: #ff9800;
+        }
+
+        .date-header {
+            font-weight: 600;
+            font-size: 1.1em;
+            margin-bottom: 10px;
+            color: #495057;
+        }
+
+        .time-option {
+            display: flex;
+            align-items: center;
+            margin: 8px 0;
+            padding: 8px;
+            border-radius: 5px;
+            transition: background 0.3s ease;
+        }
+
+        .time-option:hover {
+            background: #e9ecef;
+        }
+
+        .time-option input[type="checkbox"] {
+            margin-right: 10px;
+            transform: scale(1.2);
+        }
+
+        .time-option.checked {
+            background: #ffe6e6;
+            color: #d32f2f;
+        }
+
+        /* 배정표 스타일 */
+        .schedule-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+            background: white;
+            border-radius: 10px;
+            overflow: hidden;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+        }
+
+        .schedule-table th, .schedule-table td {
+            padding: 15px 10px;
+            text-align: center;
+            border-bottom: 1px solid #e9ecef;
+        }
+
+        .schedule-table th {
+            background: #4CAF50;
+            color: white;
+            font-weight: 600;
+            position: sticky;
+            top: 0;
+        }
+
+        .schedule-table tr:hover {
+            background: #f8f9fa;
+        }
+
+        .assigned {
+            background: #e8f5e8;
+        }
+
+        .unassigned {
+            background: #ffebee;
+            color: #d32f2f;
+        }
+
+        .person-list {
+            max-height: 400px;
+            overflow-y: auto;
+            background: #f8f9fa;
+            border-radius: 10px;
+            padding: 15px;
+        }
+
+        .person-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 15px;
+            margin-bottom: 10px;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            transition: all 0.3s ease;
+        }
+
+        .person-item:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 10px rgba(0,0,0,0.15);
+        }
+
+        .alert {
+            padding: 15px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            border-left: 5px solid #28a745;
+            background: #d4edda;
+            color: #155724;
+            position: relative;
+            animation: slideIn 0.5s ease-out;
+        }
+
+        .alert-error {
+            background: #f8d7da;
+            color: #721c24;
+            border-left-color: #dc3545;
+        }
+
+        .alert-info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border-left-color: #17a2b8;
+        }
+
+        @keyframes slideIn {
+            from { transform: translateX(-100%); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.5);
+            z-index: 1000;
+            animation: fadeIn 0.3s ease-out;
+        }
+
+        .modal-content {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: white;
+            padding: 30px;
+            border-radius: 15px;
+            width: 90%;
+            max-width: 500px;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+
+        .close {
+            position: absolute;
+            top: 15px;
+            right: 20px;
+            font-size: 30px;
+            cursor: pointer;
+            color: #6c757d;
+            transition: color 0.3s ease;
+        }
+
+        .close:hover {
+            color: #dc3545;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin: 20px 0;
+        }
+
+        .stat-card {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            text-align: center;
+            box-shadow: 0 3px 10px rgba(0,0,0,0.1);
+        }
+
+        .stat-number {
+            font-size: 2em;
+            font-weight: bold;
+            color: #4CAF50;
+        }
+
+        .stat-label {
+            color: #6c757d;
+            margin-top: 5px;
+        }
+
+        @media (max-width: 768px) {
+            .nav-tabs {
+                flex-direction: column;
             }
-          }
-        });
-
-        // 부부독서단으로 배정되지 않은 경우 개별 배정
-        if (!assigned) {
-          const sortedMales = maleReaders.sort((a, b) => 
-            serviceCountByReader[a.id] - serviceCountByReader[b.id]
-          );
-          const sortedFemales = femaleReaders.sort((a, b) => 
-            serviceCountByReader[a.id] - serviceCountByReader[b.id]
-          );
-
-          if (sortedMales.length > 0) {
-            assignment.first = sortedMales[0].id;
-            serviceCountByReader[sortedMales[0].id]++;
             
-            // 토요일 저녁 미사인 경우 기록
-            if (dayOfWeek === 6 && mass.time === '19:00') {
-              saturdayAssigned.add(sortedMales[0].id);
+            .grid {
+                grid-template-columns: 1fr;
             }
-          }
-
-          if (sortedFemales.length > 0) {
-            assignment.second = sortedFemales[0].id;
-            serviceCountByReader[sortedFemales[0].id]++;
             
-            // 토요일 저녁 미사인 경우 기록
-            if (dayOfWeek === 6 && mass.time === '19:00') {
-              saturdayAssigned.add(sortedFemales[0].id);
+            .container {
+                margin: 10px;
+                border-radius: 10px;
             }
-          }
+
+            .calendar-day {
+                min-height: 80px;
+                padding: 8px 3px;
+            }
+
+            .schedule-table th, .schedule-table td {
+                padding: 10px 5px;
+                font-size: 0.9em;
+            }
         }
-      }
-
-      newAssignments[key] = assignment;
-    });
-
-    // 독서자 봉사 횟수 업데이트
-    const updatedReaders = readers.map(reader => ({
-      ...reader,
-      serviceCount: serviceCountByReader[reader.id]
-    }));
-    
-    setReaders(updatedReaders);
-    setAssignments(newAssignments);
-  };
-
-  // 달력 렌더링
-  const renderCalendar = () => {
-    const year = currentDate.getFullYear();
-    const month = currentDate.getMonth();
-    const daysInMonth = getDaysInMonth(currentDate);
-    const firstDay = getFirstDayOfMonth(currentDate);
-    const schedule = generateMassSchedule(year, month);
-    
-    const days = [];
-    const dayNames = ['일', '월', '화', '수', '목', '금', '토'];
-    
-    // 요일 헤더
-    dayNames.forEach(day => {
-      days.push(
-        <div key={day} className="p-2 text-center font-bold text-gray-700 bg-blue-50">
-          {day}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>⛪ 천주교 독서 배정표 관리 시스템</h1>
+            <p>30명의 교우 일정을 공정하게 관리하고 자동으로 배정표를 생성하세요</p>
         </div>
-      );
-    });
 
-    // 빈 셀 (월 시작 전)
-    for (let i = 0; i < firstDay; i++) {
-      days.push(<div key={`empty-${i}`} className="p-2 bg-gray-50"></div>);
-    }
-
-    // 날짜 셀
-    for (let day = 1; day <= daysInMonth; day++) {
-      const dateStr = getDateString(year, month, day);
-      const dayMasses = schedule.filter(s => s.date === dateStr);
-      
-      days.push(
-        <div 
-          key={day} 
-          className="p-2 border min-h-[120px] cursor-pointer hover:bg-blue-50"
-          onClick={() => setSelectedDate(dateStr)}
-        >
-          <div className="font-semibold mb-1">{day}</div>
-          {dayMasses.map((mass, idx) => {
-            const assignmentKey = `${dateStr}-${mass.massId}`;
-            const assignment = assignments[assignmentKey];
-            const hasAssignment = assignment && (assignment.first || assignment.second);
-            
-            return (
-              <div 
-                key={idx} 
-                className={`text-xs p-1 mb-1 rounded ${
-                  hasAssignment ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-600'
-                }`}
-              >
-                {mass.time} {mass.type}
-                {hasAssignment && (
-                  <div className="text-xs">
-                    {assignment.first && readers.find(r => r.id === assignment.first)?.name}
-                    {assignment.second && `, ${readers.find(r => r.id === assignment.second)?.name}`}
-                  </div>
-                )}
-              </div>
-            );
-          })}
+        <div class="nav-tabs">
+            <button class="nav-tab active" onclick="showTab('settings', this)">📅 독서 일정 설정</button>
+            <button class="nav-tab" onclick="showTab('calendar', this)">📆 일정 달력 보기</button>
+            <button class="nav-tab" onclick="showTab('people', this)">👥 교우 관리</button>
+            <button class="nav-tab" onclick="showTab('unavailable', this)">❌ 불가능 시간 체크</button>
+            <button class="nav-tab" onclick="showTab('schedule', this)">📋 배정표 생성</button>
         </div>
-      );
-    }
 
-    return days;
-  };
-
-  // 불가능 시간 토글
-  const toggleUnavailability = (readerId, date, massId) => {
-    const key = `${readerId}-${date}-${massId}`;
-    setUnavailability(prev => ({
-      ...prev,
-      [key]: !prev[key]
-    }));
-  };
-
-  // 미사 일정 저장
-  const saveMass = () => {
-    console.log('saveMass 함수 실행, massForm:', massForm);
-    
-    // 유효성 검사
-    if (!massForm.time || !massForm.type) {
-      alert('시간과 미사 구분을 모두 입력해주세요.');
-      return;
-    }
-
-    if (editingMass) {
-      console.log('미사 일정 수정 모드');
-      setMasses(prev => prev.map(m => 
-        m.id === editingMass.id ? { ...massForm, id: editingMass.id } : m
-      ));
-      setEditingMass(null);
-    } else {
-      console.log('새 미사 일정 추가 모드');
-      const newId = Math.max(...masses.map(m => m.id), 0) + 1;
-      const newMass = { ...massForm, id: newId };
-      console.log('새로 추가할 미사:', newMass);
-      setMasses(prev => {
-        const updated = [...prev, newMass];
-        console.log('업데이트된 미사 목록:', updated);
-        return updated;
-      });
-    }
-    
-    // 폼 초기화
-    setMassForm({ day: 0, time: '', type: '', readingCount: 1 });
-    setShowMassForm(false);
-  };
-
-  // 독서단원 저장
-  const saveReader = () => {
-    console.log('saveReader 함수 실행, readerForm:', readerForm);
-    
-    // 유효성 검사
-    if (!readerForm.name.trim()) {
-      alert('이름을 입력해주세요.');
-      return;
-    }
-
-    if (editingReader) {
-      console.log('독서단원 수정 모드');
-      setReaders(prev => prev.map(r => 
-        r.id === editingReader.id ? { ...readerForm, id: editingReader.id, serviceCount: editingReader.serviceCount } : r
-      ));
-      setEditingReader(null);
-    } else {
-      console.log('새 독서단원 추가 모드');
-      const newId = Math.max(...readers.map(r => r.id), 0) + 1;
-      const newReader = { ...readerForm, id: newId, serviceCount: 0 };
-      console.log('새로 추가할 독서단원:', newReader);
-      
-      setReaders(prev => {
-        let updated = [...prev, newReader];
-        
-        // 부부독서단인 경우 상대방 정보도 업데이트
-        if (readerForm.isCouple && readerForm.coupleId) {
-          updated = updated.map(r => 
-            r.id === readerForm.coupleId 
-              ? { ...r, isCouple: true, coupleId: newId }
-              : r
-          );
-        }
-        
-        console.log('업데이트된 독서단원 목록:', updated);
-        return updated;
-      });
-    }
-    
-    // 폼 초기화
-    setReaderForm({ name: '', gender: '남', isCouple: false, coupleId: null });
-    setShowReaderForm(false);
-  };
-
-  // 편집 시작
-  const startEditMass = (mass) => {
-    setMassForm(mass);
-    setEditingMass(mass);
-    setShowMassForm(true);
-  };
-
-  const startEditReader = (reader) => {
-    setReaderForm(reader);
-    setEditingReader(reader);
-    setShowReaderForm(true);
-  };
-
-  // 미사 일정 관리 컴포넌트
-  const MassScheduleManager = () => (
-    <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <h3 className="text-xl font-bold">미사 일정 관리</h3>
-        <button
-          onClick={() => {
-            console.log('미사 일정 추가 버튼 클릭');
-            setMassForm({ day: 0, time: '', type: '', readingCount: 1 });
-            setEditingMass(null);
-            setShowMassForm(true);
-          }}
-          className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 flex items-center gap-2"
-        >
-          <Plus size={16} />
-          미사 일정 추가
-        </button>
-      </div>
-
-      <div className="grid gap-4">
-        {masses.map(mass => (
-          <div key={mass.id} className="bg-white p-4 rounded-lg border">
-            <div className="flex justify-between items-center">
-              <div>
-                <div className="font-semibold">
-                  {['일요일', '월요일', '화요일', '수요일', '목요일', '금요일', '토요일'][mass.day]} {mass.time}
-                </div>
-                <div className="text-gray-600">{mass.type} - {mass.readingCount}독서</div>
-              </div>
-              <div className="flex gap-2">
-                <button
-                  onClick={() => startEditMass(mass)}
-                  className="text-blue-600 hover:text-blue-800"
-                >
-                  <Edit size={16} />
-                </button>
-                <button
-                  onClick={() => setMasses(masses.filter(m => m.id !== mass.id))}
-                  className="text-red-600 hover:text-red-800"
-                >
-                  <X size={16} />
-                </button>
-              </div>
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-
-  // 미사 일정 폼 컴포넌트
-  const MassForm = () => {
-    const handleSubmit = (e) => {
-      e.preventDefault();
-      console.log('폼 제출, 현재 massForm:', massForm);
-      saveMass();
-    };
-
-    const handleClose = () => {
-      console.log('폼 닫기');
-      setShowMassForm(false);
-      setEditingMass(null);
-      setMassForm({ day: 0, time: '', type: '', readingCount: 1 });
-    };
-
-    return (
-      <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-        <div className="bg-white p-6 rounded-lg max-w-md w-full m-4">
-          <h3 className="text-lg font-bold mb-4">
-            {editingMass ? '미사 일정 수정' : '미사 일정 추가'}
-          </h3>
-          
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium mb-1">요일</label>
-              <select
-                value={massForm.day}
-                onChange={(e) => {
-                  const newDay = parseInt(e.target.value);
-                  console.log('요일 변경:', newDay);
-                  setMassForm(prev => ({...prev, day: newDay}));
-                }}
-                className="w-full border rounded-lg px-3 py-2 text-base"
-              >
-                <option value={0}>일요일</option>
-                <option value={1}>월요일</option>
-                <option value={2}>화요일</option>
-                <option value={3}>수요일</option>
-                <option value={4}>목요일</option>
-                <option value={5}>금요일</option>
-                <option value={6}>토요일</option>
-              </select>
-            </div>
+        <!-- 독서 일정 설정 탭 -->
+        <div id="settings" class="tab-content active">
+            <h2>📅 월별 독서 일정 설정 (관리자)</h2>
             
-            <div>
-              <label className="block text-sm font-medium mb-1">시간</label>
-              <input
-                type="time"
-                value={massForm.time}
-                onChange={(e) => {
-                  console.log('시간 변경:', e.target.value);
-                  setMassForm(prev => ({...prev, time: e.target.value}));
-                }}
-                className="w-full border rounded-lg px-3 py-2 text-base"
-                required
-              />
-            </div>
-            
-            <div>
-              <label className="block text-sm font-medium mb-1">미사 구분</label>
-              <input
-                type="text"
-                value={massForm.type}
-                onChange={(e) => {
-                  console.log('미사 구분 변경:', e.target.value);
-                  setMassForm(prev => ({...prev, type: e.target.value}));
-                }}
-                placeholder="예: 주일미사, 평일미사"
-                className="w-full border rounded-lg px-3 py-2 text-base"
-                required
-              />
-            </div>
-            
-            <div>
-              <label className="block text-sm font-medium mb-1">독서 수</label>
-              <select
-                value={massForm.readingCount}
-                onChange={(e) => {
-                  const newCount = parseInt(e.target.value);
-                  console.log('독서 수 변경:', newCount);
-                  setMassForm(prev => ({...prev, readingCount: newCount}));
-                }}
-                className="w-full border rounded-lg px-3 py-2 text-base"
-              >
-                <option value={1}>1독서</option>
-                <option value={2}>2독서</option>
-              </select>
-            </div>
-            
-            <div className="flex justify-end gap-2 mt-6">
-              <button
-                type="button"
-                onClick={handleClose}
-                className="px-4 py-2 border rounded-lg hover:bg-gray-50 text-base"
-              >
-                취소
-              </button>
-              <button
-                type="submit"
-                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-base"
-              >
-                저장
-              </button>
-            </div>
-          </form>
-        </div>
-      </div>
-    );
-  };
-
-  // 독서단원 폼 컴포넌트
-  const ReaderForm = () => {
-    const availablePartners = readers.filter(r => 
-      r.gender !== readerForm.gender && !r.isCouple && r.id !== editingReader?.id
-    );
-
-    return (
-      <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-        <div className="bg-white p-6 rounded-lg max-w-md w-full m-4">
-          <h3 className="text-lg font-bold mb-4">
-            {editingReader ? '독서단원 수정' : '독서단원 추가'}
-          </h3>
-          
-          <div className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium mb-1">이름</label>
-              <input
-                type="text"
-                value={readerForm.name}
-                onChange={(e) => setReaderForm({...readerForm, name: e.target.value})}
-                className="w-full border rounded-lg px-3 py-2"
-                placeholder="이름을 입력하세요"
-              />
-            </div>
-            
-            <div>
-              <label className="block text-sm font-medium mb-1">성별</label>
-              <select
-                value={readerForm.gender}
-                onChange={(e) => setReaderForm({...readerForm, gender: e.target.value})}
-                className="w-full border rounded-lg px-3 py-2"
-              >
-                <option value="남">남성</option>
-                <option value="여">여성</option>
-              </select>
-            </div>
-            
-            <div>
-              <label className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={readerForm.isCouple}
-                  onChange={(e) => setReaderForm({
-                    ...readerForm, 
-                    isCouple: e.target.checked,
-                    coupleId: e.target.checked ? readerForm.coupleId : null
-                  })}
-                />
-                부부독서단
-              </label>
-            </div>
-            
-            {readerForm.isCouple && (
-              <div>
-                <label className="block text-sm font-medium mb-1">배우자</label>
-                <select
-                  value={readerForm.coupleId || ''}
-                  onChange={(e) => setReaderForm({...readerForm, coupleId: parseInt(e.target.value) || null})}
-                  className="w-full border rounded-lg px-3 py-2"
-                >
-                  <option value="">배우자 선택</option>
-                  {availablePartners.map(partner => (
-                    <option key={partner.id} value={partner.id}>
-                      {partner.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            )}
-          </div>
-          
-          <div className="flex justify-end gap-2 mt-6">
-            <button
-              onClick={() => {
-                setShowReaderForm(false);
-                setEditingReader(null);
-                setReaderForm({ name: '', gender: '남', isCouple: false, coupleId: null });
-              }}
-              className="px-4 py-2 border rounded-lg hover:bg-gray-50"
-            >
-              취소
-            </button>
-            <button
-              onClick={saveReader}
-              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-            >
-              저장
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  };
-
-  // 독서자 관리 컴포넌트
-  const ReaderManager = () => (
-    <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <h3 className="text-xl font-bold">독서단원 관리</h3>
-        <button
-          onClick={() => {
-            console.log('독서단원 추가 버튼 클릭');
-            setReaderForm({ name: '', gender: '남', isCouple: false, coupleId: null });
-            setEditingReader(null);
-            setShowReaderForm(true);
-          }}
-          className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 flex items-center gap-2"
-        >
-          <Plus size={16} />
-          독서단원 추가
-        </button>
-      </div>
-
-      <div className="grid gap-4">
-        {readers.map(reader => (
-          <div key={reader.id} className="bg-white p-4 rounded-lg border">
-            <div className="flex justify-between items-center">
-              <div>
-                <div className="font-semibold flex items-center gap-2">
-                  {reader.name} ({reader.gender})
-                  {reader.isCouple && (
-                    <span className="bg-pink-100 text-pink-800 px-2 py-1 rounded text-xs">
-                      부부독서단
-                    </span>
-                  )}
-                </div>
-                <div className="text-gray-600">봉사 횟수: {reader.serviceCount}회</div>
-              </div>
-              <div className="flex gap-2">
-                <button
-                  onClick={() => startEditReader(reader)}
-                  className="text-blue-600 hover:text-blue-800"
-                >
-                  <Edit size={16} />
-                </button>
-                <button
-                  onClick={() => setReaders(readers.filter(r => r.id !== reader.id))}
-                  className="text-red-600 hover:text-red-800"
-                >
-                  <X size={16} />
-                </button>
-              </div>
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-
-  // 불가능 시간 입력 컴포넌트
-  const UnavailabilityInput = () => {
-    const year = currentDate.getFullYear();
-    const month = currentDate.getMonth();
-    const schedule = generateMassSchedule(year, month);
-    
-    return (
-      <div className="space-y-6">
-        <h3 className="text-xl font-bold">불가능 시간 입력</h3>
-        
-        {currentUser.role === 'reader' ? (
-          // 개별 독서자 화면
-          <div className="space-y-4">
-            {schedule.map(mass => {
-              const key = `${currentUser.id}-${mass.date}-${mass.massId}`;
-              const isUnavailable = unavailability[key];
-              
-              return (
-                <div key={`${mass.date}-${mass.massId}`} className="bg-white p-4 rounded-lg border">
-                  <div className="flex justify-between items-center">
-                    <div>
-                      <div className="font-semibold">{mass.date}</div>
-                      <div className="text-gray-600">{mass.time} {mass.type}</div>
+            <div class="grid">
+                <div class="card">
+                    <h3>기본 설정</h3>
+                    <div class="form-group">
+                        <label>대상 월:</label>
+                        <input type="month" id="targetMonth" value="2024-02">
                     </div>
-                    <button
-                      onClick={() => toggleUnavailability(currentUser.id, mass.date, mass.massId)}
-                      className={`px-4 py-2 rounded-lg ${
-                        isUnavailable 
-                          ? 'bg-red-100 text-red-800' 
-                          : 'bg-green-100 text-green-800'
-                      }`}
-                    >
-                      {isUnavailable ? '불가능' : '가능'}
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        ) : (
-          // 관리자 화면 - 모든 독서자의 불가능 시간 확인
-          <div className="space-y-4">
-            {readers.map(reader => (
-              <div key={reader.id} className="bg-white p-4 rounded-lg border">
-                <h4 className="font-semibold mb-3">{reader.name}</h4>
-                <div className="grid gap-2">
-                  {schedule.slice(0, 10).map(mass => {
-                    const key = `${reader.id}-${mass.date}-${mass.massId}`;
-                    const isUnavailable = unavailability[key];
-                    
-                    return (
-                      <div key={`${mass.date}-${mass.massId}`} className="flex justify-between items-center text-sm">
-                        <span>{mass.date} {mass.time} {mass.type}</span>
-                        <span className={isUnavailable ? 'text-red-600' : 'text-green-600'}>
-                          {isUnavailable ? '불가능' : '가능'}
-                        </span>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-    );
-  };
-
-  // 통계 컴포넌트
-  const Statistics = () => (
-    <div className="space-y-6">
-      <h3 className="text-xl font-bold">봉사 통계</h3>
-      
-      <div className="grid gap-4">
-        <div className="bg-white p-6 rounded-lg border">
-          <h4 className="font-semibold mb-4">독서자별 봉사 횟수</h4>
-          <div className="space-y-3">
-            {readers
-              .sort((a, b) => b.serviceCount - a.serviceCount)
-              .map(reader => (
-                <div key={reader.id} className="flex justify-between items-center">
-                  <span className="font-medium">{reader.name}</span>
-                  <div className="flex items-center gap-4">
-                    <div className="w-32 bg-gray-200 rounded-full h-3">
-                      <div 
-                        className="bg-blue-600 h-3 rounded-full" 
-                        style={{
-                          width: `${Math.max(10, (reader.serviceCount / Math.max(...readers.map(r => r.serviceCount), 1)) * 100)}%`
-                        }}
-                      ></div>
+                    <div class="form-group">
+                        <label>성당명:</label>
+                        <input type="text" id="churchName" placeholder="○○성당" value="성 요셉 성당">
                     </div>
-                    <span className="font-bold text-blue-600">{reader.serviceCount}회</span>
-                  </div>
+                    <div class="form-group">
+                        <label>독서 종류:</label>
+                        <select id="readingType">
+                            <option value="제1독서">제1독서</option>
+                            <option value="제2독서">제2독서</option>
+                            <option value="복음">복음</option>
+                            <option value="전체">전체</option>
+                        </select>
+                    </div>
                 </div>
-              ))}
-          </div>
-        </div>
 
-        <div className="bg-white p-6 rounded-lg border">
-          <h4 className="font-semibold mb-4">부부독서단 현황</h4>
-          <div className="space-y-2">
-            {readers
-              .filter(r => r.isCouple)
-              .reduce((couples, reader) => {
-                const existingCouple = couples.find(c => c.coupleId === reader.coupleId);
-                if (existingCouple) {
-                  existingCouple.members.push(reader);
-                } else {
-                  couples.push({ coupleId: reader.coupleId, members: [reader] });
-                }
-                return couples;
-              }, [])
-              .map(couple => (
-                <div key={couple.coupleId} className="flex justify-between items-center">
-                  <span>{couple.members.map(m => m.name).join(' & ')}</span>
-                  <span className="text-blue-600">
-                    {couple.members.reduce((sum, m) => sum + m.serviceCount, 0)}회
-                  </span>
+                <div class="card">
+                    <h3>미사 시간 설정</h3>
+                    <div class="form-group">
+                        <label>주중 미사 시간:</label>
+                        <input type="time" id="weekdayMass" value="06:30">
+                    </div>
+                    <div class="form-group">
+                        <label>주일 미사 시간 (쉼표로 구분):</label>
+                        <input type="text" id="sundayMass" placeholder="09:00, 11:00, 19:00" value="09:00, 11:00, 19:00">
+                    </div>
+                    <div class="form-group">
+                        <label>토요일 저녁 미사:</label>
+                        <input type="time" id="saturdayMass" value="19:00">
+                    </div>
                 </div>
-              ))}
-          </div>
-        </div>
-      </div>
-
-      {/* 모달 폼들 */}
-      {showMassForm && <MassForm />}
-      {showReaderForm && <ReaderForm />}
-    </div>
-  );
-
-  return (
-    <div className="min-h-screen bg-gray-50">
-      {/* 헤더 */}
-      <header className="bg-white shadow-sm border-b">
-        <div className="max-w-7xl mx-auto px-4 py-4">
-          <div className="flex justify-between items-center">
-            <h1 className="text-2xl font-bold text-gray-900">성당 독서단 관리 시스템</h1>
-            <div className="flex items-center gap-4">
-              <span className="text-gray-600">{currentUser.name}</span>
-              <select 
-                value={currentUser.role} 
-                onChange={(e) => setCurrentUser({...currentUser, role: e.target.value})}
-                className="border rounded px-3 py-1"
-              >
-                <option value="admin">관리자</option>
-                <option value="reader">독서단원</option>
-              </select>
             </div>
-          </div>
+
+            <div class="card">
+                <h3>특별 일정 설정</h3>
+                <div class="form-group">
+                    <label>휴일 또는 특별 미사일 (날짜:시간1,시간2 형식):</label>
+                    <textarea id="specialDays" placeholder="2024-02-01:10:00&#10;2024-02-09:09:00,11:00,19:00&#10;2024-02-10:09:00,11:00,19:00" rows="4"></textarea>
+                </div>
+                <button class="btn" onclick="saveSettings()">✅ 설정 저장 및 일정 생성</button>
+            </div>
+
+            <div id="settingsSummary" class="card" style="display: none;">
+                <h3>설정 요약</h3>
+                <div id="summaryContent"></div>
+            </div>
         </div>
-      </header>
 
-      <div className="max-w-7xl mx-auto px-4 py-6">
-        <div className="flex gap-6">
-          {/* 사이드바 */}
-          <div className="w-64 bg-white rounded-lg shadow-sm p-4">
-            <nav className="space-y-2">
-              <button
-                onClick={() => setActiveTab('schedule')}
-                className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-left ${
-                  activeTab === 'schedule' ? 'bg-blue-100 text-blue-700' : 'hover:bg-gray-100'
-                }`}
-              >
-                <Calendar size={20} />
-                일정 관리
-              </button>
-              
-              {currentUser.role === 'admin' && (
-                <>
-                  <button
-                    onClick={() => setActiveTab('masses')}
-                    className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-left ${
-                      activeTab === 'masses' ? 'bg-blue-100 text-blue-700' : 'hover:bg-gray-100'
-                    }`}
-                  >
-                    <Clock size={20} />
-                    미사 일정
-                  </button>
-                  
-                  <button
-                    onClick={() => setActiveTab('readers')}
-                    className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-left ${
-                      activeTab === 'readers' ? 'bg-blue-100 text-blue-700' : 'hover:bg-gray-100'
-                    }`}
-                  >
-                    <Users size={20} />
-                    독서단원
-                  </button>
-                </>
-              )}
-              
-              <button
-                onClick={() => setActiveTab('unavailability')}
-                className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-left ${
-                  activeTab === 'unavailability' ? 'bg-blue-100 text-blue-700' : 'hover:bg-gray-100'
-                }`}
-              >
-                <X size={20} />
-                불가능 시간
-              </button>
-              
-              <button
-                onClick={() => setActiveTab('statistics')}
-                className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-left ${
-                  activeTab === 'statistics' ? 'bg-blue-100 text-blue-700' : 'hover:bg-gray-100'
-                }`}
-              >
-                <BarChart3 size={20} />
-                통계
-              </button>
-            </nav>
-
-            {currentUser.role === 'admin' && (
-              <div className="mt-6 pt-4 border-t">
-                <button
-                  onClick={autoAssignReaders}
-                  className="w-full bg-green-600 text-white py-3 px-4 rounded-lg hover:bg-green-700 font-medium"
-                >
-                  자동 배정 실행
-                </button>
-              </div>
-            )}
-          </div>
-
-          {/* 메인 콘텐츠 */}
-          <div className="flex-1">
-            {activeTab === 'schedule' && (
-              <div className="bg-white rounded-lg shadow-sm">
-                <div className="p-6 border-b">
-                  <div className="flex justify-between items-center">
-                    <h2 className="text-xl font-bold">
-                      {currentDate.getFullYear()}년 {currentDate.getMonth() + 1}월 일정
-                    </h2>
-                    <div className="flex gap-2">
-                      <button
-                        onClick={() => setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() - 1))}
-                        className="p-2 hover:bg-gray-100 rounded"
-                      >
-                        <ChevronLeft size={20} />
-                      </button>
-                      <button
-                        onClick={() => setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() + 1))}
-                        className="p-2 hover:bg-gray-100 rounded"
-                      >
-                        <ChevronRight size={20} />
-                      </button>
-                    </div>
-                  </div>
+        <!-- 일정 달력 보기 탭 -->
+        <div id="calendar" class="tab-content">
+            <h2>📆 월별 독서 일정 달력</h2>
+            
+            <div class="calendar-container">
+                <div class="calendar-header">
+                    <button class="calendar-nav" onclick="changeMonth(-1)">‹</button>
+                    <h3 id="calendarTitle">2024년 2월</h3>
+                    <button class="calendar-nav" onclick="changeMonth(1)">›</button>
                 </div>
                 
-                <div className="p-6">
-                  <div className="grid grid-cols-7 gap-1">
-                    {renderCalendar()}
-                  </div>
+                <div class="calendar-grid" id="calendarGrid">
+                    <!-- 달력이 여기에 생성됩니다 -->
                 </div>
-              </div>
-            )}
+            </div>
 
-            {activeTab === 'masses' && currentUser.role === 'admin' && (
-              <div className="bg-white rounded-lg shadow-sm p-6">
-                <MassScheduleManager />
-              </div>
-            )}
-
-            {activeTab === 'readers' && currentUser.role === 'admin' && (
-              <div className="bg-white rounded-lg shadow-sm p-6">
-                <ReaderManager />
-              </div>
-            )}
-
-            {activeTab === 'unavailability' && (
-              <div className="bg-white rounded-lg shadow-sm p-6">
-                <UnavailabilityInput />
-              </div>
-            )}
-
-            {activeTab === 'statistics' && (
-              <div className="bg-white rounded-lg shadow-sm p-6">
-                <Statistics />
-              </div>
-            )}
-          </div>
+            <div class="card">
+                <h3>📋 범례</h3>
+                <div style="display: flex; gap: 20px; flex-wrap: wrap;">
+                    <div style="display: flex; align-items: center; gap: 5px;">
+                        <div class="mass-time">06:30</div>
+                        <span>평일 미사</span>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 5px;">
+                        <div class="mass-time" style="background: #ff9800;">11:00</div>
+                        <span>주일 미사</span>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 5px;">
+                        <div style="width: 20px; height: 20px; background: #e3f2fd; border: 2px solid #2196F3;"></div>
+                        <span>오늘</span>
+                    </div>
+                </div>
+            </div>
         </div>
-      </div>
-    </div>
-  );
-};
 
-export default CatholicReaderSystem;
+        <!-- 교우 관리 탭 -->
+        <div id="people" class="tab-content">
+            <h2>👥 교우 관리</h2>
+            
+            <div class="card">
+                <h3>새 교우 추가</h3>
+                <div style="display: flex; gap: 15px; align-items: end; flex-wrap: wrap;">
+                    <div class="form-group" style="flex: 1; min-width: 200px;">
+                        <label>이름:</label>
+                        <input type="text" id="newPersonName" placeholder="교우 이름">
+                    </div>
+                    <div class="form-group" style="flex: 1; min-width: 200px;">
+                        <label>연락처:</label>
+                        <input type="text" id="newPersonPhone" placeholder="010-1234-5678">
+                    </div>
+                    <button class="btn" onclick="addPerson()">👤 추가</button>
+                </div>
+            </div>
+
+            <div class="card">
+                <h3>등록된 교우 목록 (<span id="personCount">0</span>명)</h3>
+                <div id="personList" class="person-list">
+                    <!-- 교우 목록이 여기에 표시됩니다 -->
+                </div>
+            </div>
+        </div>
+
+        <!-- 불가능 시간 체크 탭 -->
+        <div id="unavailable" class="tab-content">
+            <h2>❌ 불가능한 시간 체크 (교우용)</h2>
+            
+            <div class="card">
+                <h3>교우 선택</h3>
+                <div class="form-group">
+                    <select id="selectedPersonForUnavailable" onchange="loadUnavailableTimes()">
+                        <option value="">교우를 선택하세요</option>
+                    </select>
+                </div>
+                <p style="color: #6c757d; font-size: 0.9em; margin-top: 10px;">
+                    💡 <strong>참석할 수 없는 시간만</strong> 체크해주세요. 체크하지 않은 시간은 참석 가능한 시간으로 간주됩니다.
+                </p>
+            </div>
+
+            <div id="unavailableForm" class="card" style="display: none;">
+                <h3><span id="selectedPersonNameForUnavailable"></span>님의 불가능한 시간 선택</h3>
+                <div id="unavailableTimesList" class="unavailable-times">
+                    <!-- 불가능한 시간 목록이 여기에 생성됩니다 -->
+                </div>
+                <button class="btn" onclick="saveUnavailableTimes()">💾 불가능 시간 저장</button>
+            </div>
+        </div>
+
+        <!-- 배정표 생성 탭 -->
+        <div id="schedule" class="tab-content">
+            <h2>📋 독서 배정표 생성</h2>
+            
+            <div class="card">
+                <div style="display: flex; gap: 15px; flex-wrap: wrap;">
+                    <button class="btn" onclick="generateSchedule()">🎯 공정한 자동 배정표 생성</button>
+                    <button class="btn btn-secondary" onclick="exportSchedule()">📄 엑셀로 내보내기</button>
+                    <button class="btn btn-secondary" onclick="printSchedule()">🖨️ 인쇄하기</button>
+                </div>
+            </div>
+
+            <div id="scheduleStats" style="display: none;">
+                <!-- 배정 통계가 여기에 표시됩니다 -->
+            </div>
+
+            <div id="scheduleResult">
+                <!-- 생성된 배정표가 여기에 표시됩니다 -->
+            </div>
+        </div>
+    </div>
+
+    <!-- 모달 -->
+    <div id="personModal" class="modal">
+        <div class="modal-content">
+            <span class="close" onclick="closeModal()">&times;</span>
+            <h3>교우 정보 수정</h3>
+            <div class="form-group">
+                <label>이름:</label>
+                <input type="text" id="editPersonName">
+            </div>
+            <div class="form-group">
+                <label>연락처:</label>
+                <input type="text" id="editPersonPhone">
+            </div>
+            <div style="display: flex; gap: 10px; justify-content: flex-end;">
+                <button class="btn" onclick="updatePerson()">✅ 수정</button>
+                <button class="btn btn-danger" onclick="deletePerson()">🗑️ 삭제</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 전역 변수
+        let people = [];
+        let settings = {};
+        let massSchedule = []; // 생성된 미사 일정
+        let unavailableTimes = {}; // 교우별 불가능한 시간
+        let currentEditingPerson = null;
+        let currentCalendarDate = new Date();
+
+        // 탭 전환
+        function showTab(tabName, element) {
+            document.querySelectorAll('.tab-content').forEach(content => {
+                content.classList.remove('active');
+            });
+            document.querySelectorAll('.nav-tab').forEach(tab => {
+                tab.classList.remove('active');
+            });
+            
+            document.getElementById(tabName).classList.add('active');
+            if (element) {
+                element.classList.add('active');
+            }
+
+            // 탭 전환 시 특별한 처리
+            if (tabName === 'calendar') {
+                generateCalendar();
+            } else if (tabName === 'unavailable') {
+                updatePersonSelectForUnavailable();
+            }
+        }
+
+        // 설정 저장 및 일정 생성
+        function saveSettings() {
+            settings = {
+                targetMonth: document.getElementById('targetMonth').value,
+                churchName: document.getElementById('churchName').value,
+                readingType: document.getElementById('readingType').value,
+                weekdayMass: document.getElementById('weekdayMass').value,
+                sundayMass: document.getElementById('sundayMass').value.split(',').map(time => time.trim()).filter(time => time),
+                saturdayMass: document.getElementById('saturdayMass').value,
+                specialDays: document.getElementById('specialDays').value.split('\n').filter(line => line.trim())
+            };
+
+            if (!settings.targetMonth) {
+                showAlert('대상 월을 선택해주세요.', 'error');
+                return;
+            }
+            
+            // 미사 일정 생성
+            generateMassSchedule();
+            
+            // 설정 요약 표시
+            displaySettingSummary();
+            
+            showAlert('설정이 저장되고 일정이 생성되었습니다!', 'success');
+        }
+
+        // 미사 일정 생성
+        function generateMassSchedule() {
+            massSchedule = [];
+            if (!settings.targetMonth) return;
+
+            const [year, month] = settings.targetMonth.split('-').map(Number);
+            const daysInMonth = new Date(year, month, 0).getDate();
+
+            // 특별일 파싱
+            const specialDaysMap = {};
+            settings.specialDays.forEach(line => {
+                const [dateStr, timesStr] = line.split(':');
+                if (dateStr && timesStr) {
+                    specialDaysMap[dateStr.trim()] = timesStr.split(',').map(t => t.trim());
+                }
+            });
+
+            for (let day = 1; day <= daysInMonth; day++) {
+                const date = new Date(year, month - 1, day);
+                const dateStr = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                const dayOfWeek = date.getDay();
+
+                let massTimes = [];
+
+                // 특별일 확인
+                if (specialDaysMap[dateStr]) {
+                    massTimes = specialDaysMap[dateStr];
+                } else {
+                    // 일반적인 미사 시간
+                    if (dayOfWeek === 0) { // 일요일
+                        massTimes = settings.sundayMass.slice();
+                    } else if (dayOfWeek === 6 && settings.saturdayMass) { // 토요일
+                        massTimes = [settings.saturdayMass];
+                        if (settings.sundayMass.length > 0) {
+                            massTimes = massTimes.concat(settings.sundayMass);
+                        }
+                    } else if (dayOfWeek !== 0 && settings.weekdayMass) { // 평일
+                        massTimes = [settings.weekdayMass];
+                    }
+                }
+
+                massTimes.forEach(time => {
+                    if (time) {
+                        massSchedule.push({
+                            date: dateStr,
+                            day: day,
+                            dayOfWeek: dayOfWeek,
+                            time: time,
+                            timeSlotId: `${dateStr}-${time}`
+                        });
+                    }
+                });
+            }
+        }
+
+        // 설정 요약 표시
+        function displaySettingSummary() {
+            const summaryDiv = document.getElementById('settingsSummary');
+            const contentDiv = document.getElementById('summaryContent');
+            
+            const totalSlots = massSchedule.length;
+            const weekdaySlots = massSchedule.filter(slot => slot.dayOfWeek !== 0 && slot.dayOfWeek !== 6).length;
+            const weekendSlots = massSchedule.filter(slot => slot.dayOfWeek === 0 || slot.dayOfWeek === 6).length;
+
+            contentDiv.innerHTML = `
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-number">${totalSlots}</div>
+                        <div class="stat-label">총 독서 횟수</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-number">${weekdaySlots}</div>
+                        <div class="stat-label">평일 미사</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-number">${weekendSlots}</div>
+                        <div class="stat-label">주말 미사</div>
+                    </div>
+                </div>
+                <p><strong>대상 기간:</strong> ${settings.targetMonth}</p>
+                <p><strong>성당:</strong> ${settings.churchName}</p>
+                <p><strong>독서 종류:</strong> ${settings.readingType}</p>
+            `;
+            
+            summaryDiv.style.display = 'block';
+        }
+
+        // 달력 생성
+        function generateCalendar() {
+            if (massSchedule.length === 0) {
+                document.getElementById('calendarGrid').innerHTML = 
+                    '<div style="grid-column: 1/-1; text-align: center; padding: 40px; color: #6c757d;">먼저 독서 일정을 설정해주세요.</div>';
+                return;
+            }
+
+            const [year, month] = settings.targetMonth.split('-').map(Number);
+            currentCalendarDate = new Date(year, month - 1, 1);
+            
+            updateCalendarDisplay();
+        }
+
+        // 달력 표시 업데이트
+        function updateCalendarDisplay() {
+            const year = currentCalendarDate.getFullYear();
+            const month = currentCalendarDate.getMonth();
+            const firstDay = new Date(year, month, 1);
+            const lastDay = new Date(year, month + 1, 0);
+            const daysInMonth = lastDay.getDate();
+            const startDay = firstDay.getDay();
+
+            // 제목 업데이트
+            document.getElementById('calendarTitle').textContent = 
+                `${year}년 ${month + 1}월`;
+
+            const grid = document.getElementById('calendarGrid');
+            let html = '';
+
+            // 요일 헤더
+            const dayNames = ['일', '월', '화', '수', '목', '금', '토'];
+            dayNames.forEach(day => {
+                html += `<div class="calendar-day-header">${day}</div>`;
+            });
+
+            // 이전 달 날짜들
+            const prevMonth = month === 0 ? 11 : month - 1;
+            const prevYear = month === 0 ? year - 1 : year;
+            const prevMonthDays = new Date(prevYear, prevMonth + 1, 0).getDate();
+            
+            for (let i = startDay - 1; i >= 0; i--) {
+                const day = prevMonthDays - i;
+                html += `<div class="calendar-day other-month">
+                    <div class="day-number">${day}</div>
+                </div>`;
+            }
+
+            // 현재 달 날짜들
+            const today = new Date();
+            const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+
+            for (let day = 1; day <= daysInMonth; day++) {
+                const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                const dayOfWeek = new Date(year, month, day).getDay();
+                
+                // 해당 날짜의 미사 시간들 찾기
+                const dayMasses = massSchedule.filter(mass => mass.date === dateStr);
+                
+                let classes = 'calendar-day';
+                if (dateStr === todayStr) classes += ' today';
+                if (dayMasses.length > 0) classes += ' has-mass';
+                if (dayOfWeek === 0) classes += ' sunday';
+
+                html += `<div class="${classes}">
+                    <div class="day-number">${day}</div>`;
+
+                dayMasses.forEach(mass => {
+                    html += `<div class="mass-time">${mass.time}</div>`;
+                });
+
+                html += '</div>';
+            }
+
+            // 다음 달 날짜들
+            const remainingCells = 42 - (startDay + daysInMonth);
+            for (let day = 1; day <= remainingCells; day++) {
+                html += `<div class="calendar-day other-month">
+                    <div class="day-number">${day}</div>
+                </div>`;
+            }
+
+            grid.innerHTML = html;
+        }
+
+        // 달력 월 변경
+        function changeMonth(direction) {
+            currentCalendarDate.setMonth(currentCalendarDate.getMonth() + direction);
+            updateCalendarDisplay();
+        }
+
+        // 교우 추가
+        function addPerson() {
+            const name = document.getElementById('newPersonName').value.trim();
+            const phone = document.getElementById('newPersonPhone').value.trim();
+            
+            if (!name) {
+                showAlert('이름을 입력해주세요.', 'error');
+                return;
+            }
+            
+            const person = {
+                id: Date.now(),
+                name: name,
+                phone: phone
+            };
+            
+            people.push(person);
+            updatePersonList();
+            updatePersonSelects();
+            
+            document.getElementById('newPersonName').value = '';
+            document.getElementById('newPersonPhone').value = '';
+            
+            showAlert(`${name}님이 추가되었습니다!`, 'success');
+        }
+
+        // 교우 목록 업데이트
+        function updatePersonList() {
+            const listElement = document.getElementById('personList');
+            const countElement = document.getElementById('personCount');
+            
+            countElement.textContent = people.length;
+            
+            if (people.length === 0) {
+                listElement.innerHTML = '<div style="text-align: center; color: #6c757d; padding: 20px;">등록된 교우가 없습니다.</div>';
+                return;
+            }
+
+            listElement.innerHTML = people.map(person => `
+                <div class="person-item">
+                    <div>
+                        <strong>${person.name}</strong>
+                        ${person.phone ? `<br><small style="color: #6c757d;">${person.phone}</small>` : ''}
+                    </div>
+                    <button class="btn btn-secondary" onclick="editPerson(${person.id})">✏️ 수정</button>
+                </div>
+            `).join('');
+        }
+
+        // 교우 선택 드롭다운들 업데이트
+        function updatePersonSelects() {
+            updatePersonSelectForUnavailable();
+        }
+
+        function updatePersonSelectForUnavailable() {
+            const selectElement = document.getElementById('selectedPersonForUnavailable');
+            selectElement.innerHTML = '<option value="">교우를 선택하세요</option>' +
+                people.map(person => `<option value="${person.id}">${person.name}</option>`).join('');
+        }
+
+        // 교우 수정 모달
+        function editPerson(personId) {
+            const person = people.find(p => p.id === personId);
+            if (!person) return;
+            
+            currentEditingPerson = personId;
+            document.getElementById('editPersonName').value = person.name;
+            document.getElementById('editPersonPhone').value = person.phone || '';
+            document.getElementById('personModal').style.display = 'block';
+        }
+
+        // 교우 정보 업데이트
+        function updatePerson() {
+            if (!currentEditingPerson) return;
+            
+            const name = document.getElementById('editPersonName').value.trim();
+            if (!name) {
+                showAlert('이름을 입력해주세요.', 'error');
+                return;
+            }
+            
+            const personIndex = people.findIndex(p => p.id === currentEditingPerson);
+            if (personIndex !== -1) {
+                people[personIndex].name = name;
+                people[personIndex].phone = document.getElementById('editPersonPhone').value.trim();
+                
+                updatePersonList();
+                updatePersonSelects();
+                closeModal();
+                showAlert('교우 정보가 수정되었습니다!', 'success');
+            }
+        }
+
+        // 교우 삭제
+        function deletePerson() {
+            if (!currentEditingPerson) return;
+            
+            if (confirm('정말 삭제하시겠습니까? 해당 교우의 불가능 시간 정보도 함께 삭제됩니다.')) {
+                people = people.filter(p => p.id !== currentEditingPerson);
+                delete unavailableTimes[currentEditingPerson];
+                
+                updatePersonList();
+                updatePersonSelects();
+                closeModal();
+                showAlert('교우가 삭제되었습니다.', 'success');
+            }
+        }
+
+        // 모달 닫기
+        function closeModal() {
+            document.getElementById('personModal').style.display = 'none';
+            currentEditingPerson = null;
+        }
+
+        // 불가능한 시간 로드
+        function loadUnavailableTimes() {
+            const personId = document.getElementById('selectedPersonForUnavailable').value;
+            if (!personId) {
+                document.getElementById('unavailableForm').style.display = 'none';
+                return;
+            }
+            
+            if (massSchedule.length === 0) {
+                showAlert('먼저 독서 일정을 설정해주세요.', 'error');
+                return;
+            }
+
+            const person = people.find(p => p.id == personId);
+            document.getElementById('selectedPersonNameForUnavailable').textContent = person.name;
+            document.getElementById('unavailableForm').style.display = 'block';
+            
+            generateUnavailableTimesList(personId);
+        }
+
+        // 불가능한 시간 목록 생성
+        function generateUnavailableTimesList(personId) {
+            const listDiv = document.getElementById('unavailableTimesList');
+            
+            // 날짜별로 그룹화
+            const dateGroups = {};
+            massSchedule.forEach(mass => {
+                if (!dateGroups[mass.date]) {
+                    dateGroups[mass.date] = [];
+                }
+                dateGroups[mass.date].push(mass);
+            });
+
+            let html = '';
+            Object.keys(dateGroups).sort().forEach(date => {
+                const masses = dateGroups[date];
+                const firstMass = masses[0];
+                const dateObj = new Date(date);
+                const dayNames = ['일', '월', '화', '수', '목', '금', '토'];
+                
+                const isWeekend = firstMass.dayOfWeek === 0 || firstMass.dayOfWeek === 6;
+                
+                html += `
+                    <div class="date-section ${isWeekend ? 'sunday' : ''}">
+                        <div class="date-header">
+                            ${dateObj.getMonth() + 1}월 ${dateObj.getDate()}일 (${dayNames[firstMass.dayOfWeek]})
+                        </div>
+                `;
+
+                masses.forEach(mass => {
+                    const isChecked = unavailableTimes[personId] && unavailableTimes[personId][mass.timeSlotId];
+                    html += `
+                        <div class="time-option ${isChecked ? 'checked' : ''}" onclick="toggleUnavailable('${personId}', '${mass.timeSlotId}', this)">
+                            <input type="checkbox" ${isChecked ? 'checked' : ''} onchange="event.stopPropagation()">
+                            <span>${mass.time} 미사 독서</span>
+                        </div>
+                    `;
+                });
+
+                html += '</div>';
+            });
+
+            listDiv.innerHTML = html;
+        }
+
+        // 불가능 시간 토글
+        function toggleUnavailable(personId, timeSlotId, element) {
+            if (!unavailableTimes[personId]) {
+                unavailableTimes[personId] = {};
+            }
+
+            const checkbox = element.querySelector('input[type="checkbox"]');
+            checkbox.checked = !checkbox.checked;
+            
+            unavailableTimes[personId][timeSlotId] = checkbox.checked;
+            
+            if (checkbox.checked) {
+                element.classList.add('checked');
+            } else {
+                element.classList.remove('checked');
+            }
+        }
+
+        // 불가능한 시간 저장
+        function saveUnavailableTimes() {
+            const personId = document.getElementById('selectedPersonForUnavailable').value;
+            if (!personId) return;
+            
+            const person = people.find(p => p.id == personId);
+            showAlert(`${person.name}님의 불가능한 시간이 저장되었습니다!`, 'success');
+        }
+
+        // 공정한 배정표 생성
+        function generateSchedule() {
+            if (!settings.targetMonth || people.length === 0 || massSchedule.length === 0) {
+                showAlert('먼저 일정 설정과 교우 등록을 완료해주세요.', 'error');
+                return;
+            }
+            
+            // 각 교우의 배정 횟수 초기화
+            const personAssignments = {};
+            people.forEach(person => {
+                personAssignments[person.id] = 0;
+            });
+
+            const schedule = [];
+            const unassignedSlots = [];
+
+            // 각 미사 시간에 대해 배정
+            massSchedule.forEach(mass => {
+                // 해당 시간에 가능한 사람들 찾기 (불가능하다고 체크하지 않은 사람들)
+                const availablePeople = people.filter(person => 
+                    !unavailableTimes[person.id] || !unavailableTimes[person.id][mass.timeSlotId]
+                );
+
+                let assignedPerson = null;
+
+                if (availablePeople.length > 0) {
+                    // 가장 적게 배정된 사람들 중에서 선택
+                    const minAssignments = Math.min(...availablePeople.map(p => personAssignments[p.id]));
+                    const leastAssignedPeople = availablePeople.filter(p => personAssignments[p.id] === minAssignments);
+                    
+                    // 동일한 배정 횟수를 가진 사람들 중에서 랜덤 선택
+                    assignedPerson = leastAssignedPeople[Math.floor(Math.random() * leastAssignedPeople.length)];
+                    personAssignments[assignedPerson.id]++;
+                }
+
+                const scheduleItem = {
+                    date: mass.date,
+                    day: mass.day,
+                    dayOfWeek: ['일', '월', '화', '수', '목', '금', '토'][mass.dayOfWeek],
+                    time: mass.time,
+                    timeSlotId: mass.timeSlotId,
+                    assignedPerson: assignedPerson,
+                    availableCount: availablePeople.length
+                };
+
+                schedule.push(scheduleItem);
+
+                if (!assignedPerson) {
+                    unassignedSlots.push(scheduleItem);
+                }
+            });
+
+            displaySchedule(schedule, personAssignments);
+        }
+
+        // 배정표 표시
+        function displaySchedule(schedule, personAssignments) {
+            const resultElement = document.getElementById('scheduleResult');
+            const statsElement = document.getElementById('scheduleStats');
+            
+            // 통계 생성
+            const totalSlots = schedule.length;
+            const assignedSlots = schedule.filter(item => item.assignedPerson).length;
+            const unassignedSlots = totalSlots - assignedSlots;
+
+            // 개인별 배정 통계
+            const personalStats = people.map(person => ({
+                name: person.name,
+                count: personAssignments[person.id] || 0
+            })).sort((a, b) => b.count - a.count);
+
+            // 통계 표시
+            let statsHtml = `
+                <div class="card">
+                    <h3>📊 배정 통계</h3>
+                    <div class="stats-grid">
+                        <div class="stat-card">
+                            <div class="stat-number">${totalSlots}</div>
+                            <div class="stat-label">총 독서 횟수</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-number" style="color: #28a745;">${assignedSlots}</div>
+                            <div class="stat-label">배정 완료</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-number" style="color: #dc3545;">${unassignedSlots}</div>
+                            <div class="stat-label">배정 불가</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-number">${((assignedSlots/totalSlots)*100).toFixed(1)}%</div>
+                            <div class="stat-label">배정 성공률</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h3>👥 개인별 배정 현황</h3>
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px;">
+            `;
+
+            personalStats.forEach(stat => {
+                statsHtml += `
+                    <div style="background: white; padding: 15px; border-radius: 8px; text-align: center; box-shadow: 0 2px 5px rgba(0,0,0,0.1);">
+                        <div style="font-weight: bold; color: #4CAF50; font-size: 1.5em;">${stat.count}</div>
+                        <div style="color: #6c757d;">${stat.name}</div>
+                    </div>
+                `;
+            });
+
+            statsHtml += '</div></div>';
+            statsElement.innerHTML = statsHtml;
+            statsElement.style.display = 'block';
+
+            // 배정표 생성
+            let html = `
+                <div class="card">
+                    <h3>${settings.churchName} ${settings.targetMonth} ${settings.readingType} 배정표</h3>
+                    <table class="schedule-table">
+                        <thead>
+                            <tr>
+                                <th>날짜</th>
+                                <th>요일</th>
+                                <th>시간</th>
+                                <th>배정자</th>
+                                <th>연락처</th>
+                                <th>가능인원</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+            `;
+            
+            schedule.forEach(item => {
+                const dateFormatted = new Date(item.date).toLocaleDateString('ko-KR', {
+                    month: 'long',
+                    day: 'numeric'
+                });
+                
+                const rowClass = item.assignedPerson ? 'assigned' : 'unassigned';
+                
+                html += `
+                    <tr class="${rowClass}">
+                        <td>${dateFormatted}</td>
+                        <td>${item.dayOfWeek}</td>
+                        <td>${item.time}</td>
+                        <td>${item.assignedPerson ? item.assignedPerson.name : '❌ 배정 불가'}</td>
+                        <td>${item.assignedPerson ? (item.assignedPerson.phone || '-') : '-'}</td>
+                        <td>${item.availableCount}명</td>
+                    </tr>
+                `;
+            });
+
+            html += '</tbody></table></div>';
+            
+            resultElement.innerHTML = html;
+        }
+
+        // 알림 표시
+        function showAlert(message, type = 'success') {
+            const alertDiv = document.createElement('div');
+            let className = 'alert';
+            if (type === 'error') className += ' alert-error';
+            if (type === 'info') className += ' alert-info';
+            
+            alertDiv.className = className;
+            alertDiv.innerHTML = message;
+            
+            const container = document.querySelector('.container');
+            const header = container.querySelector('.header');
+            header.insertAdjacentElement('afterend', alertDiv);
+            
+            setTimeout(() => {
+                alertDiv.remove();
+            }, 4000);
+        }
+
+        // 엑셀 내보내기 (기본 구현)
+        function exportSchedule() {
+            showAlert('엑셀 내보내기 기능은 추후 구현될 예정입니다.', 'info');
+        }
+
+        // 인쇄하기
+        function printSchedule() {
+            const printWindow = window.open('', '_blank');
+            const scheduleTable = document.querySelector('.schedule-table');
+            
+            if (!scheduleTable) {
+                showAlert('먼저 배정표를 생성해주세요.', 'error');
+                return;
+            }
+
+            printWindow.document.write(`
+                <html>
+                <head>
+                    <title>${settings.churchName} ${settings.targetMonth} ${settings.readingType} 배정표</title>
+                    <style>
+                        body { font-family: Arial, sans-serif; margin: 20px; }
+                        h1 { text-align: center; color: #4CAF50; }
+                        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+                        th, td { border: 1px solid #ddd; padding: 10px; text-align: center; }
+                        th { background-color: #4CAF50; color: white; }
+                        .unassigned { background-color: #ffebee; }
+                    </style>
+                </head>
+                <body>
+                    <h1>${settings.churchName} ${settings.targetMonth} ${settings.readingType} 배정표</h1>
+                    ${scheduleTable.outerHTML}
+                </body>
+                </html>
+            `);
+            
+            printWindow.document.close();
+            printWindow.print();
+        }
+
+        // 페이지 로드 시 초기화
+        document.addEventListener('DOMContentLoaded', function() {
+            // 현재 날짜로 기본값 설정
+            const now = new Date();
+            const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+            document.getElementById('targetMonth').value = currentMonth;
+        });
+
+        // 모달 외부 클릭 시 닫기
+        window.onclick = function(event) {
+            const modal = document.getElementById('personModal');
+            if (event.target === modal) {
+                closeModal();
+            }
+        }
+    </script>
+</body>
+</html>
